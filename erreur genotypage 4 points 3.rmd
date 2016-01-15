@@ -1,0 +1,685 @@
+---
+title: "Linkage mapping with genotyping error"
+author: "Luc Baudouin"
+date: "Thursday, November 26, 2015"
+output: word_document
+---
+
+> Changement de point de vue. Je passe directement ? la correction
+```{r functions,echo=FALSE}
+
+rm(list = ls())
+
+where<-"./sources"
+files<-list.files(where)
+sapply(paste(where,"/",files[grepl(".[rR]",files)], sep=""),source)
+```
+
+
+
+# General assumptions
+
+The mapping population is a BC$_1$. The recurrent parent is homozygous, the other parent (the F$_1$ is heterozygous. We are making a high density map using GBS. Using the sequence, we can order the markers on a scaffold, then order the scaffolds. This doesn't require calculating a recombination distance. However, at a later stage, we want to identify QTLs  and this requires distances. But with GBS and high density map, even a low rate of genotyping errors results in noisy data and a poor estimation of distances, which become too long. A first idea is to get rid of errors by using a moving window to correct errors. Another idea would be to estimate simultaneously the distances and the noise, using at least three loci. The first part of the document presents a simulation of genetic linkage with noise.  
+
+# principle of the simulation
+
+We consider $N$ individuals and $L$ loci regularly spaced, at a distance of $d$ centimorgans. The genotype of an individual is represented by a logical vector and the whole population is represented by a matrix. `FALSE` represents the homozygous genotype of the recurrent parent, `TRUE` represents a heterozygouth genotype. The effects of recombination and mutations are easy to represent using logical fuctions such as `==` (equal),`!=` (different ) and `NOT`. Basically, the steps are the following:
+
+* randomly assign the first locus of all individuals (proba=$1/2$),
+* randomly assign recombination events (proba = $d/100$) to intervals between loci,
+* deduce the multilocus genotypes.
+* estimate the distance matrix from the simulation data,
+* randomly assign genotyping errors (proba=$e$) and simulate the "noisy" data,
+* estimate again the distance matrix from the "noisy" simulation data
+
+
+```{r simulation,echo=FALSE, cache=FALSE}
+# Parameters for simulations (suggested values in parentheses)
+N<-3000        #(300) individuals
+L0<-1000       #(10000) simulated loci 
+L<-100         # (100) used loci
+d<-0.1         #(1) centimorgan
+rr<-d/100      # The recombination rate
+eg<-0.05       # errors
+md<-0.01       # missing data (.01)
+g<-c(TRUE,FALSE)  # True: heterozygote, False: homozygote
+
+# Parameters for graphic and results
+maxind<-min(N,50) #Number of genotypes represented
+wdl<-5            #value of lwd for genotype graphs
+WF<-min(L-1,30)  # Used to limit the number of loci in graphs and calculations
+WT<-min(L-1,10)  # Used to limit the number of loci in text output
+
+
+################## begin simulation #############################
+# Simulating L0 loci 
+pop<-simPop(N,L0,d)
+# Selecting L loci (to introduce variability in interval length)
+loc<-sort(sample.int(L0,L))
+pop<-pop[,loc]
+# introducing genotyping errors
+popN<-GenotypingErrors(pop,eg)
+err<-popN!=pop
+# There is also a function for missing data...
+# but before using it I need to change toStrings and correctGenotypes accordingly...
+# popN<-missingData(popN,md) #
+################## end simulation #############################
+
+
+    
+```
+In the following example, there are `r N` individuals and `r L` loci. The distance between loci is `r d` centimorgans and the error rate is `r eg`. In other words, the ratio of errors to crossing overs is `r eg/d*100`  . 
+```{r recodage,echo=FALSE}
+#outN1<-toCode(popN)
+#out1<-toCode(pop)
+#Repr?sentation en chaine
+#outstr<-toStrings(out)
+#outNstr<-toStrings(out1)
+popstr<-toStrings(pop)
+popNstr<-toStrings(popN)
+popstr<-apply(pop,1, function(x) paste(as.numeric(x), collapse=""))
+popNstr<-apply(popN,1, function(x) paste(as.numeric(x), collapse=""))
+#errstr<-apply(err,1, function(x) paste(as.numeric(x), collapse=""))
+corr<-correctGenotype(popNstr)
+```
+
+
+```{r errors,echo=FALSE}
+# locus level statistics
+count<-single(pop)
+freq<-apply(count,2, function(x) x/sum(x))
+#popx<- apply(pop,1, function(x) paste(sapply(x,function(y) ifelse(y,"."," ")),collapse=""))
+maxind<-min(N,50)
+plotPop(pop,main="genotypes")
+
+plotPop(popN,main="observations")
+
+
+```
+
+
+# Locus level results
+
+Allele frequencies (for the first `r WT` markers)
+```{r frequencies,echo=FALSE}
+lfr<-apply(pop[,1:WT],2,mean)
+lfr<-rbind(lfr,apply(popN[,1:WT],2,mean))
+colnames(lfr)<- paste("locus",1:10)
+rownames(lfr)<-c("without noise" , "with noise")
+noquote(formatC(lfr))
+
+```
+
+
+```{r distance,echo=FALSE}
+#without noise
+#distance matrix
+dist<-sapply(1:L, function(x) sapply(1:L,function(y) distance(pop,x,y)))*100
+d1<-sapply(3:(L-1),function(x) distance(pop,x-1,x))*100
+#with noise
+distN<-sapply(1:L, function(x) sapply(1:L,function(y) distance(popN,x,y)))*100
+dN<-sapply(3:(L-1),function(x) distance(popN,x-1,x))*100
+
+```
+
+```{r distance_stat,echo=FALSE}
+#Compute mean estimated distances 
+dmeanN<-dmean<-NULL
+for(i in 1:WF){
+  dj<-sapply(1:(L-i), function(j) dist[j,j+i] ) 
+  dmean<-c(dmean,mean(dj))
+  dNj<-sapply(1:(L-i), function(j) distN[j,j+i] ) 
+  dmeanN<-c(dmeanN,mean(dNj))
+}
+
+```
+
+
+```{r distanceNoise_stat,echo=FALSE}
+
+plot(dmeanN,type="l",ylim = c(0,WF*d*1.2),ylab="estimated distances",xlab="distance between loci", col="green",bty="n", main="Effect of genotypic errors ond distances ")
+legend(1,WF*d*1.1,legend=c("theoretical","without noise","with noise ","difference"),lty=1,col=c("red","blue","green", "purple"),cex=0.6)
+lines(dmean, col="blue")
+lines(dmeanN-dmean, col="purple")
+abline(0,1,col="red")
+abline(h=0)
+
+```
+In the above graph, the distances are averaged on all pairs of loci. The estimated distance without noise (blue) is shorter than the actual distance (red) because of multiple recombinations. At short distance, the estimated distance with noise (green) is twice the recombination rate + the error rate. The reason is that genotyping errors at both loci affect the apparent distance. The dfference decreases when the distance increases. What we have to do is finding a way to compensate these  errors. The first idea si to use genotypes at three loci to compensate genotyping errors.
+
+# The three point method
+Using four loci is preferable. This method is presented for the purpose of comparison and also because it is useful at both ends of a scaffold (or of a chromosome), where the four point method cannot be applied. We need here to suppose that the frequency of genotyping errors is constant over loci. Another hypothesis is that events (genotypic errors and crossing overs) are not too frequent. Then we can estimate this rate based on three successive loci. This also allows us to estimate distances. In fact, we have  
+
+$$ \begin{cases} d(L_0,L_1)=A=a+e\\
+                 d(L_1,L_2)=B=b+e\\
+                 d(L_0,L_2)=C=a+b+e \end{cases}
+$$
+from which we obtain an estimation of the error rate
+$$ \hat e=A+B-C$$
+and of  the distances
+$$ \hat a=C-B$$
+$$ \hat b=C-A$$
+
+To simulate the gain of accuracy, we can estimate $e$ as an average of all tree points values and subtract the result from the matrix (except for the diagonal). The huge overestimation of distances resulting from using apparent distances (ie with noise) is solved. Instead, we have a moderate underestimation of recombination distances.
+
+
+```{r correct3,echo=FALSE}
+tp3<-sapply(2:(L-1), function(x) threePoint(distN,x))
+error3<-mean( tp3[1,])
+distC3<-distN-error3 #ici on corrige par l'?limination d'un terme d'erreur moyen!!!
+dl<-tp3[2,-(L-2)]
+dr<-tp3[3,-1]
+#for(i in 1:L) distC3[i,i]<-0
+distC3[distC3<0]<-0
+dmeanC3<-NULL
+for(i in 1:WF){
+  dj<-sapply(1:(L-i), function(j) distC3[j,j+i] ) 
+  dmeanC3<-c(dmeanC3,mean(dj))
+}
+dmeanC3L<-dmeanC3[-1]
+dmeanC3R<-dmeanC3[-WF]
+plot(dmeanN,type="l",ylim = c(0,WF*d*1.2),ylab="distances",xlab="loci", col="green",bty="n", main="distances between loci, with correction")
+legend(1,WF*d*1.1,legend=c("theoretical","without noise","with noise ", "corrected "),lty=1,col=c("red","blue","green", "orange"),cex=0.6)
+lines(dmean, col="blue")
+lines(dmeanC3, col="orange")
+
+abline(0,1,col="red")
+abline(h=0)
+
+```
+
+
+
+```{r distances, echo=FALSE}
+d0<-seq(0,(WT-1)*d,d)
+dist0<-NULL
+for(i in 1:WT-1) dist0<-rbind(dist0,abs(d0-i))
+rownames(dist0)<-NULL
+cat("theoretical distance\n")
+round(dist0,2)
+cat("distance without noise\n")
+round(dist,2)[1:WT,1:WT]
+cat("distance with noise\n")
+round(distN,2)[1:WT,1:WT]
+cat("corrected distance\n")
+round(distC3,2)[1:WT,1:WT]
+cat("error term\n")
+error3/2
+
+```
+Note that, conventionally, negative values in the corrected distance matrix were set to 0.
+
+The sum of the "noisy" distances is extremely high. The distances without noise and and corrected are smaller in average but appear to fluctuate a lot around the true value. Maybe a three-point approach is preferable.
+
+Suggestion: add missing data, use irregular spacing.
+
+```{r x,echo=FALSE}
+outx<-sapply(2:(L-1), function(x) threePoint(distN,x))
+#z<-(out[2,]+out[3])/2
+#zz<-cbind(out[2,-1],out[3,-(L-2)])
+
+#zz
+
+#plot(zz)
+z<-c(outx[2,1],(outx[2,-1]+outx[3,-(L-2)])/2,outx[3,(L-2)])
+#z
+cat("theoretical distance")
+sum(sapply(2:L, function(x) dist[i-1,i]))
+cat("Distance with noise")
+sum(sapply(2:L, function(x) distN[i-1,i]))
+cat("corrected by removing noise term")
+sum(sapply(2:L, function(x) distC3[i-1,i]))
+
+cat("corrected by three point estimation of distance")
+sum(z)
+
+```
+
+
+# The four point method
+
+The following method is more accurate and doesn'- need to suppose that the error rate is constant. Let us consider four loci: L~0~, L~1~, L~2~ and L~4~. The genotyping error frequencies are respectively $g_0$, $g_1$, $g_2$ and $g_3$. The recombination frequencies in the three intervals are $a$,$b$ and $c$. The apparent distances are:      
+$$ \begin{cases} d(L_0,L_1)=A=a+g_0+g_1\\
+                 d(L_1,L_2)=B=b+g_1+g_2\\
+                 d(L_2,L_3)=C=c+g_2+g_3\\
+                 d(L_0,L_2)=D=a+b+g_0+g_2\\
+                 d(L_1,L_3)=D=b+c+g_1+g_3\\
+                 d(L_0,L_3)=D=a+b+c+g_0+g_3\end{cases}
+$$
+This is meaningful only if the loci are close enough, in other words, in a given individual, the probability of two recombination events in a given interval (or even in adjacent intervals) is negligible. The same holds for genotyping errors). In these conditions, the frequency of recombinations in the middle interval (ie between L~1~ and L~2~) is *exactly* 
+$$ (B+F-A-C)/2=b$$
+In fact, the terms $a$ an $c$ cancel, as well as the genotyping errors.
+Likewise, the rates of genotyping errors at L~1~ and L~2~ are given by 
+$$ (A+B-D)/2=g_2 $$
+and 
+$$ (B+C-E)/2=g_3 $$
+
+
+```{r correct4,echo=FALSE}
+fp4<-sapply(1:(L-3), function(x) fourPoint(distN,x))
+error4l<-mean( fp4[2,])
+error4r<-mean( fp4[3,])
+dc<-fp4[1,]
+plot(cumsum(d1),type="l",xlim=c(0,L),col="black",main="Estimated length",xlab="theoretical length", ylab="estimated value")
+lines(cumsum(dN),type="l",col="red")
+lines(cumsum(dl),type="l",col="blue")
+lines(cumsum(dr),type="l",col="cyan")
+lines(cumsum(dc),type="l",col="orange")
+
+abline(0,1,lty=3)
+legend(70,L*d*0.3,legend=c("simulated","with noise","3 point left","3 point right", "four point"),lty=1,col=c("black","red","blue","cyan", "orange"),cex=0.6)
+#errstr<-apply(err,1, function(x) paste(as.numeric(x), collapse=""))
+```
+
+Contrary to the previous plots, what is represented here is the cumulative sum of the distances along the chromosome.. The simulated distance deviates randomly from the theoretical value, the genotyping errors lead to a gross overestimation of the distances. The three-point method allows to estimate a distance to the right and to the left of the central point. On the long run, these estimates grow more or less linearly but they underestimate the actual distances and present local fluctuations (note that some estimated distances are negative!). The four-point estimator also underestimates lengths but is much smoother and negative values are much less likely.
+
+```{r estim_error, echo=FALSE}
+xx<-data.frame(d1,dN,dl,dr,dc)
+# boxplot(xx)
+yy<-data.frame(noisy=dN-d1,left=dl-d1,right=dr-d1,combined=(dr+dl)/2-d1,four=dc-d1)
+boxplot(yy,main="deviation from recombination rate", xlab="estimated value", ylab="deviation"  )
+abline(0,0,lty=2)
+abline(mean(-d1),0, lty=3)
+
+summary(yy,digit=2)
+```
+
+In the above boxplot, the deviation from the simulated distances are plotted. Note that the four point estimator is more stable than the three-point estimators even when they are averaged. 
+
+
+
+# Toward an error correcting method
+
+To improve the method, I propose to apply in an individual basis, thus converting it into an error correction method. The above estimators are exact *if the "one event at a time" rule is verified*. They are thus applicable to individuals. This makes it possible to filter out genotyping errors  and to locate crossing overs. It also allows spotting the relatively rare cases where the rule is obviously broken. In these cases, considering longer sequences should allow identifying a sensible solution.
+For example, we have the following genotype: TFTT, which results in $A=1$, $B=1$, $C=0$, $D=0$, $E=1$ and $F=0$.The above formulae become
+
+$(B+F-A-C)/2=(0+1-1-0)/2=0$, no recombination,  
+$(A+B-D)/2=(1+1-0)/2=1$, a genotyping error at L~1~ and  
+$(B+C-E)/2=(1+0-1)/2=0$, no genotyping error at L~2~.
+
+There are only 16 possible cases which can be reduced to 8 by symetry (the allele at L~0~ is arbitrary). It gave the correct result in 6 cases. The other cases are TFTF and TFFT  which imply multiple events (recombinations and/or genotyping errors). Here these cases are numbered using a hexadecimal notation, which summarizes the genotypes in a four locus window
+
+0, f: 0000 or 1111 Nothing  
+1, e: 0001 or 1110 Nothing in the central interval  
+2, d: 0010 or 1101 Genotyping error at L~2~  
+3, c: 0011 or 1100 Recombination  
+4, b: 0100 or 1011 Genotyping error at L~1~  
+5, a: 0101 or 1010 The method wrongly says genotyping errors occured at  L~1~ and L~2~ and no recombination...  
+6, 9  0110 or 1001 The method wrongly says that there is -1(!?) crossing over between L~1~ and L~2~  
+7, 8: 0111 or 1000 Nothing in the central interval  
+
+The reason the method fails in two cases is that the model assumes that only one event occurs at a time. These cases obviously violate this assumption. Note however 1) that these cases are relatively rare and 2) they can be identified by their signature. When the calculations are made at the population level, the errors occuring in cases 6 and 9 are incorporated, which probably accounts for the underestimation of distances. By operating at the individual level, we are able to cases 5,6, 9 and a and to trat them appropriately. There are two options:
+
+* a quick and dirty approach illustrated here: if we find 1010, by broadening the scope, we may see it is embedded in a 11101011 sequence. In this case, the intuitive solution is that we have two genotyping errors and no crossing over. There are a limited number of solutions to be explored. 
+* a more rigourous and demanding approach where we evaluate the probabilities of different events. This can go a little bit far: even in the case where we have 11110000, the most probable situation is a crossing over between locus 4 and locus 5. However, there may be a genotyping error on locus 4 and in this case, the crossing over would be between locus 3 and locus 4 etc. 
+
+This more elaborated approach demands an estimation of the rates of genotyping errors and of recombinations. This could be done by starting with default values and iterating until conergence (an EM algorithm. It will converge even faster if we obtain the initial values from an application of the method at the population level).  
+
+
+We compute the codes for each four locus window . The result is an integer between 0 and 15.
+
+
+```{r bid1,echo=FALSE}
+# utile?
+# Copop<-sapply(1:length(popstr), function(x) paste(gregexpr("01|10",popstr[x])[[1]], collapse=" "))
+# CopopN<-sapply(1:length(popstr), function(x) paste(gregexpr("01|10",popNstr[x])[[1]], collapse=" "))
+# Coid<-sapply(1:length(outstr), function(x) paste(gregexpr("3|c",outstr[x])[[1]]+1, collapse=" "))
+# CoidN<-sapply(1:length(outNstr), function(x) paste(gregexpr("3|c",outNstr[x])[[1]]+1, collapse=" "))
+# Coid[Coid==0]<--1
+# CoidN[CoidN==0]<--1
+
+```
+
+```{r bid2,echo=FALSE}
+
+# # CopopN # localise 
+# write.table(cbind(Copop,CopopN,Coid,CoidN),"identify crossing over.txt",sep="\t",row.names = FALSE)
+# #il y a pas mal d'erreurs. Il faudrait identifier chaque CO, vrai ou suppos?, par individu,place.
+# #mais d'abord lers erreurs
+# errPop<-sapply(1:length(outstr), function(x) paste(gregexpr("1",errstr[x])[[1]], collapse=" "))
+# 
+# #? gauche
+# #errLid<-sapply(1:length(outstr), function(x) paste(gregexpr("4|b",outstr[x])[[1]], collapse=" "))
+# errLidN<-sapply(1:length(outNstr), function(x) paste(gregexpr("4|b",outNstr[x])[[1]]+1, collapse=" "))
+# errLidN[errLidN==0]<--1
+# 
+# #? droite
+# 
+# #errRid<-sapply(1:length(outstr), function(x) paste(gregexpr("2|d",outstr[x])[[1]], collapse=" "))
+# errRidN<-sapply(1:length(outNstr), function(x) paste(gregexpr("2|d",outNstr[x])[[1]]+2, collapse=" "))
+# errRidN[errRidN==1]<--1
+# 
+# errRidN2<-sapply(1:length(outNstr), function(x) paste(gregexpr("2|5|6|9|a|d",outNstr[x])[[1]], collapse=" "))#
+# errRidN2[errRidN==1]<--1
+# #errRidN2
+# #cbind(errPop,errLidN, errRidN, errRidN2)
+# #r?sultat moyen
+
+```
+
+
+```{r cases, echo=FALSE}
+
+
+      #Fr?quences
+barplot(table(outN)/L/N*100, main="distribution of four locus codes", xlab="four locus codes",ylab="percentage",ylim=c(0,5), xpd=FALSE)
+#z<-hist(outN, breaks =-.5+(0:16),main="distribution of four locus codes", xlab="four locus codes",ylog=TRUE)
+stable<-length(outN[outN %in% c(0,15)])
+conflict<-length(outN[outN %in% c(5,6,9,10)])
+transition<-length(outN[outN %in% c(1,3,7,8,12,14)])
+others<-length(outN[outN %in% c(2,4,13,11)])
+paste("stable                   ",stable,round(stable/length(outN)*100,2),"%")
+paste("transition               ",transition,round(transition/length(outN)*100,2),"%")
+paste("isolated genotyping error",others,round(others/length(outN)*100,2),"%")
+paste("conflict                 ",conflict,round(conflict/length(outN)*100,2),"%")
+
+```
+
+
+
+The most frequent cases cases are 0 (all alleles from the recurrent parent) or 15 (all alleles from the other parent). A transition from one state to the other involves  a succession of codes 1,3 an 7 or 14, 12 and 8 (in the other direction). Cases 2, 4, 11 and 13 are usually found around an genotyping error. In particular, the conflict cases (5,6,9 and 10) correspond to at least two events and represent  only `r round(conflict/length(outN)*100,2) ` % of the total.
+
+
+
+```{r last,echo=FALSE}
+
+
+# Copop1<-CopopN1<-Coid1<-CoidN1<-geN<-NULL
+# for(x in 1:N){
+#   cp<-gregexpr("01|10",popstr[x])[[1]]
+#   if(cp[1]!=-1)  Copop1<-c(Copop1,paste(x,cp))
+#   cpn<-gregexpr("01|10",popNstr[x])[[1]]
+#   if(cpn[1]!=-1) CopopN1<-c(CopopN1,paste(x,cpn))
+#   ci<-gregexpr("3|c",outstr[x])[[1]]
+#   if(ci[1]!=-1) Coid1<-c(Coid1,paste(x,ci+1))
+#   cin<-gregexpr("3|c",outNstr[x])[[1]]
+#   if(cin[1]!=-1) CoidN1<-c(CoidN1,paste(x,cin+1))
+# #ici je veux 5,6,9 ou a
+#   gen<-gregexpr("[569a]",outNstr[x])[[1]]
+#   if(gen[1]!=-1) geN<-c(geN,paste(x,gen+1))
+#   }
+# cat("real crossing over               ", length(Copop1))
+# cat("crossing over found without noise",length(Coid1))
+# cat("crossing over and errors         ", length(CopopN1),"\n")
+# cat("crossing over found with noise   ",length(CoidN1),"\n")
+# cat("\n")
+# 
+# cat("without noise,\n")
+# #length(union(Copop1,CoidN1))
+# cat("crossing over correctly identified",length(intersect(Copop1,Coid1)),"\n")
+# cat("false negatives                   ",length(setdiff(Copop1,Coid1)),"\n")
+# cat("false positives                   ",length(setdiff(Coid1,Copop1)),"\n")
+# cat("\n")
+# cat("false negatives are probably close to an end of the chromosome...\n")
+# cat("\n")
+# cat("with noise,\n")
+# #length(union(Copop1,CoidN1))
+# cat("crossing over correctly identified",length(intersect(Copop1,CoidN1)),"\n")
+# cat("false negatives                   ",length(setdiff(Copop1,CoidN1)),"\n")
+# cat("false positives                   ",length(setdiff(CoidN1,Copop1)),"\n")
+# 
+# 
+# 
+# cat("list of false negatives")
+# setdiff(Copop1,CoidN1)
+# cat("list of false positives")
+# setdiff(CoidN1,Copop1)
+# 
+# cat("list of correct identifications")
+# sn<-intersect(Copop1,CoidN1)
+# #substr(sn,1,grep(" ",sn))
+# sn
+# #grep(" ",sn)
+# 
+# cat("next lines are intended for interactive execution only...")
+# uu<-21;cat("crossing over ",popstr[uu],"\n");cat(" without noise -",outstr[uu],"--\n", sep="") ;cat("+ noise       ", popNstr[uu],"\n");cat(" with noise    -",outNstr[uu],"--\n",sep="")
+
+```
+La m?thode dans sa forme initiale trouve `r round(length(intersect(Copop1,CoidN1))/length(Copop1)*100,1)` des `r length(Copop1)` crossing overs parmi `r formatC(N*L,7)`. C'et en fait une bonne performance compte tenu du niveau du bruit de fond (5% d'erreurs de g?notypage!). Cependant outre les `r round(length(setdiff(Copop1,CoidN1))/length(Copop1)*100,1)` manquants, de plus, `r round(length(setdiff(CoidN1,Copop1))/length(CoidN1)*100,1)` deses crossing overs propos?s n'existent pas. Il faut l'am?liorer en recherchant des mots significatifs dans la chaine repr?sentative d'un scaffold. Ces mots doivent ?tre aussi court que possible mais suffisemment long pour repr?senter les situations les plus fr?quentes. Par exemple '137' ou 'ec8' signe un crossing over ; 'edb7' signe une erreur de g?notypage. La rencontre de plusieurs ?v?nements donne des patterns plus complexes par exemple 'eda5b7' repr?sente 2 erreurs de g?notypages (et pas 4 crossing overs!). Il arrive que les patterns soient ambigus par exemple eda48 repr?sente une erreur de g?notypage et un crossign over mais on ne peut pas  les ordonner. Enfin, si une erreur de g?notypage est sur la borne d'un crossing over, on se trompe de toute fa?on.
+
+Une question est de savoir si les taux d'erreur sont locus-d?pendantes. Ceci peut ?tre r?gl? en les posant ?gales et d'it?rer par un algorithme EM.
+
+```{r}
+# extractC<-function(chains,pos, back=2, len=5){
+#   #extract from a text vector a 'len' character long substring starting 'back'-1 characters before the given position.
+#   #pos is itself a character string with two numbers separated by blanks. The first number is the index of the searched string and the second 
+#   pos1<-as.numeric(strsplit(pos," ")[[1]])
+#   startx<-pos1[2]-back-1
+#   stopx<-startx+len-1
+#   substr(chains[pos1[1]],startx,stopx)
+# }
+# 
+# extractC(outNstr,geN[1])
+# code<-sapply(geN, function(x) extractC(outNstr,x))
+# profil<-sapply(geN, function(x) extractC(popNstr,x,back=2,len=8))
+# genot<-sapply(geN, function(x) extractC(popstr,x,back=2,len=8))
+# 
+# 
+# solved<-c("125a[45]|eda5[ba]|136c8|ec937|24924|db6db|25a48|da5b7|125b7|eda48|2493[78]|db6c[89]|136db|ec964")
+# #00000000
+# solved00<-c("125a[45]|136c8|24924|25a48")
+# #11111111
+# solvedFF<-c("eda5[ba]|ec937|db6db|da5b7")
+# #00000111
+# solved07<-c("125b[67]|2493[78]")
+# #11111000
+# solvedF8<-c("eda4[89]|db6c[89]")
+# #00011111
+# solved1F<-"136db"
+# 
+# solvedF0<-"ec964"
+# grep("125",code)
+# solvedc<-grep(solved,code)
+# 
+# 
+# gg<-sapply(geN, strsplit, " ")
+# ind<-as.numeric(sapply(gg, function(x) x[[1]]))
+# place<-as.numeric(sapply(gg, function(x) x[[2]]))
+# 
+# out<-data.frame(ind=ind[-solvedc],place=place[-solvedc],code=code[-solvedc],profil=profil[-solvedc],genot=genot[-solvedc])
+# #out<-data.frame(code,profil,genot)
+# rownames(out)<-NULL
+# head(out)
+# codeu<-sort(unique(code))
+# codeu1<-sort(unique(code[-solvedc]))
+# 
+# length(codeu)
+# length(codeu1)
+# length(code)
+# length(code[-solvedc])
+# 
+# cases<-lapply(codeu1, function(x) out[out$code==x,])
+# names(cases)<- codeu1
+# head(cases)
+# sink("cases1.txt", type="output")
+# cases
+# sink()
+```
+Codes fr?quents et donnant presque toujours la m?me chose
+On peut les consid?rer comme r?solus.
+125a 0001010 -> 0000000
+eda5 1110101 -> 1111111 
+
+136c8 00011000 -> 00000000 
+ec937 11100111 -> 11111111 
+
+24924 00100100 -> 00000000
+db6db 11011011 -> 11111111
+
+25a48 00101000 -> 00000000
+da5b7 11010111 -> 11111111
+
+autres exemples ci-dessus...
+
+# Vers une solution pratique
+
+LL'id?e serait de cr?er des chaines de caract?res constitu?es de 9 (par exemple) pour chaque individu. En plusieurs passes on remplacerait les 9 par le g?notype confirm?. Par exemple, `F` en position $n$ donnerait `1` en position $n+1$ 
+
+
+```{r}
+# dico<-read.delim("dictionary.txt",colClasses=c(rep("character",3),"numeric","character"))
+dico<-read.delim("dictionary.txt",colClasses=c(rep("character",3),"numeric","character"))
+dico
+
+
+#corrected<-doCorrect(popNstr,outNstr,dico)
+corrected<-doCorrect(popNstr,dico)
+ #maxx<-N
+# Correct<-correction(outNstr[1:maxx],dico)
+
+
+# Correct
+# for(x in 1:nrow(Correct)){
+#   pos<-Correct$where[x]+Correct$offset[x]
+#   len<-nchar(Correct$what[x])
+#   substr(corrected[Correct$ind[x]],pos,pos+len)<-Correct$what[x]
+# }
+
+corrected[corrected!=popstr]
+popstr[corrected!=popstr]
+popNstr[corrected!=popstr]
+
+gg<-2
+
+counter1<-0
+# diff?rent et d?cod?
+for(x in 1:maxx){
+  cond0<-substr(popstr[x],gg,L-gg)!=substr(corrected[x],gg,L-gg)# diff?rence ? l'int?rieur
+  cond1<-length(grep("9|8",substr(corrected[x],gg,L-gg)))==0 # tout est d?cod?
+  if(cond0&cond1){
+    counter1<-counter1+1
+    cat(x,"exact",popstr[x],"\n")
+    cat(x,"noisy",popNstr[x],"\n")
+    cat(x,"after",corrected[x],"\n")
+    cat(x,"coded  ",outNstr[x],"\n")
+    cat("\n")
+  }
+}
+counter<-0
+# parties non d?cod?es
+for(x in 1:maxx){
+  cond0<-substr(popstr[x],gg,L-gg)!=substr(corrected[x],gg,L-gg)# diff?rence ? l'int?rieur
+  cond1<-length(grep("9",substr(corrected[x],gg,L-gg)))!=0 # tout n'est pas d?cod?
+  if(cond0&cond1){
+    counter<-counter+1
+    cat(x,"exact",popstr[x],"\n")
+    cat(x,"noisy",popNstr[x],"\n")
+    cat(x,"after",corrected[x],"\n")
+    cat(x,"coded  ",outNstr[x],"\n")
+    cat("\n")
+  }
+}
+
+counter2<-0
+cat("probl?mes aux bouts\n")
+for(x in 1:maxx){
+  cond0<-substr(popstr[x],gg,L-gg)!=substr(corrected[x],gg,L-gg)# diff?rence ? l'int?rieur
+  cond2<-length(grep("^9|9$",substr(corrected[x],gg,L-gg)))!=0 # probl?me aux bords
+  if(cond2){
+    counter2<-counter2+1
+    cat(x,"exact",popstr[x],"\n")
+    cat(x,"noisy",popNstr[x],"\n")
+    cat(x,"after",corrected[x],"\n")
+    cat(x,"coded  ",outNstr[x],"\n")
+    cat("\n")
+  }
+}
+counter1
+counter1/maxx
+
+counter
+counter/maxx
+
+counter2
+counter2/maxx
+b<-Sys.time()
+b-a
+# zz<-corrected
+# pat<-"9"
+# grep(pat,zz)
+# grep(pat,zz,value = TRUE)
+# grepl(pat,zz)
+# regexpr(pat,zz)
+# gregexpr(pat,zz)
+# 
+# regexec(pat,zz)
+
+```
+
+```{r}
+#tests
+# Correct[Correct$what=="gggggggg",]
+# Correct[Correct$ind==6,]
+# Correct[488,]
+# y<-488
+# pos<-Correct$where[y]+Correct$offset[y]
+#   len<-nchar(Correct$what)
+#   substr(corrected[Correct$ind[x]],pos,pos+len)<-Correct$what[x]
+# 
+# x<-6
+#  cat(x,"exact ",popstr[x],"\n");  cat(x,"noised",popNstr[x],"\n");  cat(x,"after ",corrected[x],"\n");  cat(x,"coded   ",outNstr[x],"\n")
+corr2<-sapply(corrected, strsplit,"")
+corr2
+corr2[[match("8",corr2)]]
+u<-gregexpr("[98]",corr2)
+v<-gregexpr("[98]",corrected)
+all.equal(u,v)
+u[7]
+v[7]
+corr2[7]
+corrected[7]
+zz<-popNstr[7]
+#ancien correct1
+  case<-dico[1,]
+  s2<-gregexpr(case$coded,outNstr)
+  out0<-lapply(1:length(s2), function(x) data.frame(ind=x,where=s2[[x]],what=case$translated,offset=case$offset,stringsAsFactors=FALSE))
+  out<-NULL
+  for(x in 1:length(out0)) out<-rbind(out,out0[[x]])
+  outold<-out[out$where!=-1,]
+
+
+
+#r?vision de correct1
+case<-data.frame(read="0{4,}",coded="",translated="0",offset=0,note="stable",stringsAsFactors =FALSE)
+s2<-gregexpr(case$read,popNstr)
+sl<-sapply(s2,attr,"match.length")
+out0<-lapply(1:length(s2), function(x) data.frame(ind=x,where=s2[[x]],what=case$translated,length=sl[[x]],offset=case$offset,stringsAsFactors=FALSE))
+ out<-NULL
+  for(x in 1:length(out0)) out<-rbind(out,out0[[x]])
+  outnew<-out[out$where!=-1,]
+dim(outold)
+dim(outnew)
+#ancien doCorrect
+  corrected<-rep(paste(rep("9",nchar(popstr[1])),collapse=""),length(popstr))
+  #Correct<-correction(codestr,dico)
+  Correct=outold
+  # Correct
+  x=1
+  substr(corrected[Correct$ind[x]],pos,pos+len)<-Correct$what[x]
+  corrected
+  for(x in 1:nrow(Correct)){
+    pos<-Correct$where[x]+Correct$offset[x]
+    len<-nchar(Correct$what[x])
+    substr(corrected[Correct$ind[x]],pos,pos+len)<-Correct$what[x]
+  }
+  corrected
+
+#nouveau doCorrect
+  corrected<-rep(paste(rep("9",nchar(popstr[1])),collapse=""),length(popstr))
+  #Correct<-correction(codestr,dico)
+  corrected
+  Correct=outnew
+  Correct$times<-Correct$length/nchar(Correct$what)
+  # Correct
+  x=1
+  for(x in 1:nrow(Correct)){
+    pos<-Correct$where[x]+Correct$offset[x]
+    len<-Correct$length[x]
+    substr(corrected[Correct$ind[x]],pos,pos+len)<-paste(rep(Correct$what[x],Correct$times[x]),collapse = "")
+  }
+  corrected
+
+  head(zzz)
+paste(rep(Correct$what[x],Correct$length[x]),collapse = "")
+```
+
