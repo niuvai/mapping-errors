@@ -62,7 +62,7 @@ popN<-GenotypingErrors(pop,eg)
 err<-popN!=pop
 # There is also a function for missing data...
 # but before using it I need to change toStrings and correctGenotypes accordingly...
-# popN<-missingData(popN,md) #
+# popN<-missingData(popN,md) #   ffff ggg
 ################## end simulation #############################
 
 
